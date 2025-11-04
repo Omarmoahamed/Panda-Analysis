@@ -92,7 +92,16 @@ class Analysis_Summary:
                                     self.col_dtypes[col] = 'float32'
                                 else:
                                     self.col_dtypes[col] = 'float64'
-                            
+                else:
+                          self._optimize_object_dtypes(col,data)
+
+
+    def _optimize_object_dtypes(self,col:str,data:pd.DataFrame):
+            if data[col].dtype == 'object':
+                num_unique_values = data[col].nunique()
+                num_total_values = len(data[col])
+                if num_unique_values / num_total_values < 0.5:
+                    self.col_dtypes[col] = 'category'
 
         
     def __summarize_data(self,file_path,column_names:list[str],compound_col_name:list[str]=None,compund_col_data =None,replace_char=None,target_char=None,splitchar=None):
