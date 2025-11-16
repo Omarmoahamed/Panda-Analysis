@@ -22,17 +22,31 @@ def open(path,arrow=None,mode='rb',mmap=False,encoding="utf-8"):
 
 
 
+def find(data:memoryview ):
+    i = 0
+    for byte in data:
+        i=+1 
+        if chr( byte) =='\n':
+            return i
+            
+
+    
 
 
-def offset(data:bytes|str,newline_readhead):
+def offset(data:bytes|str|memoryview,chunk):
     if isinstance(data,bytes):
         try:
-           return data.index(b'\n',newline_readhead)
+           return data.index(b'\n',chunk)
         except ValueError:
             return -1
     elif isinstance(data,str):
         try:
-           return data.index('\n',newline_readhead)
+           return data.index('\n',chunk)
+        except ValueError:
+            return -1
+    elif isinstance(data,memoryview):
+        try:
+           return find(data[chunk:])
         except ValueError:
             return -1
     elif not data:
