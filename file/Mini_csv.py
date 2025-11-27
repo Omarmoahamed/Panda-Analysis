@@ -4,11 +4,14 @@ import pyarrow as pa
 import mmap as mm
 import file as fi
 import queue as q
-import threading as th
+import threading  as th
 import concurrent.futures as cf
+ 
 
+x = th.Condition()
+y = th.Lock()
 
-cf.ThreadPoolExecutor
+cf.ThreadPoolExecutor()
 
 def file__in__chunks(path,chunk_size,newline_readhead,arrow=None,mode='rb',encoding="utf-8"):
     

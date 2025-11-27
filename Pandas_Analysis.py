@@ -4,12 +4,12 @@ import json as js
 import Column as c
 import logging as log
 import numpy as np
-import Factory as f
+import Factory as fa
 
 
 
 
-@f.EngineFactory.register_engine('pandas')
+@fa.EngineFactory.register_engine('pandas')
 class Pandas_Analysis(a.Analysis_Summary):
     def __init__(self,file_path, chunk_size:int):
         super().__init__(file_path, chunk_size)

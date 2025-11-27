@@ -34,14 +34,16 @@ class Analysis_Summary(ABC):
     def __getitem__(self, key:str):
         return self.Columns.get(key, None)
     
+    @abstractmethod
+    def run(file_path, column_names, compound_col_name, compound_col_data, replace_char, target_char, splitchar):
+        pass
     
     @classmethod
     def start(cls,engine, file_path,chunksize, column_names:list[str], compound_col_name:list[str]=None, compound_col_data=None, replace_char=None, target_char=None, splitchar=None):
       analysis = f.EngineFactory.get_engine(engine, file_path, chunksize)
       try:
         
-        analysis.optimize(column_names)
-        analysis.__summarize_data(file_path, column_names, compound_col_name, compound_col_data, replace_char, target_char, splitchar)
+        analysis.run( column_names, compound_col_name, compound_col_data, replace_char, target_char, splitchar)
       except Exception as e:
         print(f"Error during analysis: {e}")
 

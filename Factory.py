@@ -1,5 +1,5 @@
 
-import Analysis_Summary
+import Analysis_Summary as a
 
 
 class EngineFactory:
@@ -8,7 +8,7 @@ class EngineFactory:
 
 
     @staticmethod
-    def get_engine(engine_type, *args, **kwargs)-> Analysis_Summary:
+    def get_engine(engine_type, *args, **kwargs)-> a.Analysis_Summary:
         
         try:
             cls = EngineFactory.Engine_registry[engine_type]
