@@ -24,19 +24,25 @@ def file__in__chunks(path,chunk_size,newline_readhead,arrow=None,mode='rb',encod
     with fi.open(path,arrow=arrow,mode=mode,mmap=False,encoding=encoding) as file:
        done = False
        while not done:
+               
                current_size = chunk_size + newline_readhead
                data = file.read(current_size)
+
+               if(len(data)>chunk_size):
            
-               offset = fi.offset(data,chunk_size)
-               if offset == -1:
+                 offset = fi.offset(data,chunk_size)
+                 if offset == -1:
                    raise ValueError("newline character not found in the chunk")
            
-               elif offset == 0:
+                 elif offset == 0:
                    done =True 
 
-               else:
+                 else:
                    chunk_rightnow = data[:offset+1+chunk_size]
                    leftover = data[chunk_size+offset+1:]
+               else:
+                     done = True
+                     chunk_rightnow = data
            
                def return_data(data=chunk_rightnow,leftover_prev=leftover_prev):
                  data = leftover_prev + data
