@@ -8,6 +8,8 @@ import threading as th
 import csv as csv
 import Factory as fa
 import file.Multithreading as mth
+import Column as c
+import logging as log
 
 @fa.EngineFactory.register_engine("pyarrow")
 class Pyarrow_Analysis(base.Analysis_Summary):
@@ -17,20 +19,22 @@ class Pyarrow_Analysis(base.Analysis_Summary):
     
 
     def run(self, column_names, compound_col_name, compound_col_data, replace_char, target_char, splitchar):
+         
          read_options = csv.ReadOptions(use_threads = True)
          parse_options = csv.ParseOptions(delimiter = ',')
          col_names = self.optimize(column_names=column_names)
          convert_options = csv.ConvertOptions(column_types=self.data_types,column_names=col_names,include_columns=column_names)
 
          def process(data):
-              pass
+              buffer = pa.BufferReader(pa.py_buffer(data()))
+              chunk = pa_csv.read_csv(buffer,read_options=read_options,parse_options=parse_options,convert_options=convert_options)
+              self.__summarize_data(chunk,column_names,compound_col_name,compound_col_data,replace_char,target_char,splitchar)
          
          pool = mth.get_pool_threads(4)
 
          chunk = f.file__in__chunks(self.file_path,32*1024*1024,128*1024)
-
-         for ch in chunk:
-              pool.map(process,chunk)
+ 
+         pool.map(process,chunk)
 
 
               
@@ -41,7 +45,47 @@ class Pyarrow_Analysis(base.Analysis_Summary):
 
     
 
-
+    def __summarize_data(self,chunk,column_names:list[str],compound_col_name:list[str]=None,compund_col_data =None,replace_char=None,target_char=None,splitchar=None):
+       
+        
+        for col in column_names:
+                self.row_count += chunk.shape[0]
+                count = len(chunk[col])
+                if col in self.Columns:
+                     self.Columns[col].col_count += count
+                else:
+                     self.Columns[col] = c.Column(count)
+                self.calculate(chunk,col)
+        self.Average_Calculation(column_names)
+    
+    def calculate(self,chunk:pa.table,col:str):
+         if chunk[col].dtype in self.data_types:
+                     current_col:c.Column = None
+                     if col in self.Columns:
+                      
+                      current_col = self.Columns[col]
+                     
+                     if current_col:
+                         fillna_col = chunk[col].fillna(0,inplace=True)
+                         chunk =chunk.set_column(chunk.schema.get_field_index(col),col,fillna_col)
+                         current_col = self.Columns[col]
+                         current_max = pc.max( fillna_col)
+                         current_col.col_max = max(current_col.col_max, current_max)
+                         if current_col.avg is None:
+                                current_col.avg = pc.sum(chunk[col])
+                         else:
+                                current_col.avg += pc.sum(chunk[col])
+                     else:
+                          log.error(f"Column {col} not found in Columns dictionary.")
+                         
+                     
+    def Average_Calculation(self,cols:list[str]):
+        for col in cols:
+            if col in self.Columns:
+                current_col:c.Column = self.Columns[col]
+                current_col.col_avg = current_col.col_avg /current_col.col_count
+            else:
+                log.error(f"Column {col} not found in Columns dictionary.")
 
     def optimize(self,column_names:list[str])->list[str]:
 

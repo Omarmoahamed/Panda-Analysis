@@ -36,12 +36,12 @@ def find(data:memoryview ):
 def offset(data:bytes|str|memoryview,chunk):
     if isinstance(data,bytes):
         try:
-           return data.index(b'\n',chunk)
+           return (chunk - data.index(b'\n',chunk))
         except ValueError:
             return -1
     elif isinstance(data,str):
         try:
-           return data.index('\n',chunk)
+           return (chunk - data.index(b'\n',chunk))
         except ValueError:
             return -1
     elif isinstance(data,memoryview):
