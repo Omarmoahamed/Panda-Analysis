@@ -49,7 +49,7 @@ class Pyarrow_Analysis(base.Analysis_Summary):
        
         
         for col in column_names:
-                self.row_count += chunk.shape[0]
+                self.row_count += chunk.num_rows
                 count = len(chunk[col])
                 if col in self.Columns:
                      self.Columns[col].col_count += count
@@ -69,12 +69,12 @@ class Pyarrow_Analysis(base.Analysis_Summary):
                          fillna_col = chunk[col].fillna(0,inplace=True)
                          chunk =chunk.set_column(chunk.schema.get_field_index(col),col,fillna_col)
                          current_col = self.Columns[col]
-                         current_max = pc.max( fillna_col)
+                         current_max = pc.max( fillna_col).as_py()
                          current_col.col_max = max(current_col.col_max, current_max)
                          if current_col.avg is None:
-                                current_col.avg = pc.sum(chunk[col])
+                                current_col.avg = pc.sum(chunk[col]).as_py()
                          else:
-                                current_col.avg += pc.sum(chunk[col])
+                                current_col.avg += pc.sum(chunk[col]).as_py()
                      else:
                           log.error(f"Column {col} not found in Columns dictionary.")
                          
@@ -107,10 +107,10 @@ class Pyarrow_Analysis(base.Analysis_Summary):
             if('id' in col.lower()):
                 continue
             else:
-                if data[col].dtype in self.data_types:
-                     min_val = pc.min( data[col])
-                     max_val = pc.max(data[col])
-                     if data[col].dtype == 'int64':
+                if data[col].type in self.data_types:
+                     min_val = pc.min( data[col]).as_py()
+                     max_val = pc.max(data[col]).as_py()
+                     if data[col].type == 'int64':
                        
                         if min_val >= 0:
                             if max_val < 255:
@@ -130,7 +130,7 @@ class Pyarrow_Analysis(base.Analysis_Summary):
                                 self.col_dtypes[col] = 'int32'
                             else:
                                 self.col_dtypes[col] = 'int64'
-                     elif data[col].dtype == 'float64':
+                     elif data[col].type == 'float64':
                                 if max_val < self.float_types['float16'].max:
                                     self.col_dtypes[col] = 'float16'
                                 elif max_val < self.float_types['float32'].max:
@@ -142,8 +142,13 @@ class Pyarrow_Analysis(base.Analysis_Summary):
 
 
     def _optimize_object_dtypes(self,col:str,data:pa.table):
-            if data[col].dtype == 'object':
-                num_unique_values = data[col].nunique()
+            if data[col].type == 'object':
+                num_unique_values = pc.pc.count_distinct(data[col]).as_py()
                 num_total_values = len(data[col])
                 if num_unique_values / num_total_values < 0.5:
-                    self.col_dtypes[col] = 'category'
+                    if num_unique_values < 127:
+                        self.col_dtypes[col] = pa.dictionary(pa.int8(), pa.string())
+                    elif num_unique_values < 32767:
+                        self.col_dtypes[col] = pa.dictionary(pa.int16(), pa.string())
+                    
+                    
