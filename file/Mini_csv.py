@@ -33,9 +33,6 @@ def file__in__chunks(path,chunk_size,newline_readhead,arrow=None,mode='rb',encod
                  offset = fi.offset(data,chunk_size)
                  if offset == -1:
                    raise ValueError("newline character not found in the chunk")
-           
-                 elif offset == 0:
-                   done =True 
 
                  else:
                    chunk_rightnow = data[:offset+1+chunk_size]

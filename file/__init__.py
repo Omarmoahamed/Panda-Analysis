@@ -41,7 +41,7 @@ def offset(data:bytes|str|memoryview,chunk):
             return -1
     elif isinstance(data,str):
         try:
-           return (chunk - data.index(b'\n',chunk))
+           return (chunk - data.index('\n',chunk))
         except ValueError:
             return -1
     elif isinstance(data,memoryview):
@@ -50,6 +50,6 @@ def offset(data:bytes|str|memoryview,chunk):
         except ValueError:
             return -1
     elif not data:
-        return 0
+        raise ValueError("data is empty")
     else:
         raise ValueError("data must be bytes or str")

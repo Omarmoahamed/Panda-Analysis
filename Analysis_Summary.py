@@ -36,7 +36,7 @@ class Analysis_Summary(ABC):
     
     @abstractmethod
     def run(file_path, column_names, compound_col_name, compound_col_data, replace_char, target_char, splitchar):
-        pass
+        ...
     
     @classmethod
     def start(cls,engine, file_path,chunksize, column_names:list[str], compound_col_name:list[str]=None, compound_col_data=None, replace_char=None, target_char=None, splitchar=None):
