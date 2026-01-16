@@ -464,42 +464,75 @@ class Pyarrow_Analysis(base.Analysis_Summary):
     def _update_max_min_values(self, chunk: pa.Table, value_col: str, all_cols: list[str], comp_col: cc.compound_column):
         """Updates max and min values for a numeric column with associated values from other columns."""
         try:
-            # Filter out null values
+            if value_col not in chunk.column_names:
+                return
+
             valid_mask = pc.is_valid(chunk[value_col])
             if not pc.any(valid_mask).as_py():
                 return
+
+            valid = chunk.filter(valid_mask)
+            if valid.num_rows == 0:
+                return
+
+            cols_to_capture = [col for col in all_cols if col in valid.column_names]
+            if value_col not in cols_to_capture:
+                cols_to_capture.append(value_col)
+
+            # Select only columns we need
+            selected_table = valid.select(cols_to_capture)
             
-            # Get max value from this chunk
-            max_val = pc.max(chunk[value_col]).as_py()
-            if max_val is not None:
-                # Check if this is a new maximum (accumulate across chunks)
-                existing_max_dict = comp_col.max_values.get(value_col, {})
-                current_max = existing_max_dict.get(value_col, float('-inf'))
-                
-                if max_val > current_max:
-                    # Find row with max value
-                    mask = pc.equal(chunk[value_col], max_val)
-                    filtered = chunk.filter(mask)
-                    if filtered.num_rows > 0:
-                        max_dict = {col: filtered[col][0].as_py() for col in all_cols if col in filtered.column_names}
-                        max_dict[value_col] = max_val  # Include the value itself
-                        comp_col.max_values[value_col] = max_dict
+            # Most efficient approach: Use argmax/argmin to find index, then take that row
+            # This avoids sorting/grouping and directly gets the row with max/min value
             
-            # Get min value from this chunk
-            min_val = pc.min(chunk[value_col]).as_py()
-            if min_val is not None:
-                # Check if this is a new minimum (accumulate across chunks)
-                existing_min_dict = comp_col.min_values.get(value_col, {})
-                current_min = existing_min_dict.get(value_col, float('inf'))
+            # Find max: Get index of maximum value, then extract that row
+            # Using pc.argmax() - most efficient way to find max row index (O(n) single pass)
+            try:
+                idx_max = pc.argmax(selected_table[value_col])
+                max_idx = idx_max.as_py() if idx_max is not None else None
                 
-                if min_val < current_min:
-                    # Find row with min value
-                    mask = pc.equal(chunk[value_col], min_val)
-                    filtered = chunk.filter(mask)
-                    if filtered.num_rows > 0:
-                        min_dict = {col: filtered[col][0].as_py() for col in all_cols if col in filtered.column_names}
-                        min_dict[value_col] = min_val  # Include the value itself
-                        comp_col.min_values[value_col] = min_dict
+                if max_idx is not None:
+                    max_row = selected_table.take([max_idx])
+                    
+                    if max_row.num_rows > 0:
+                        # Convert to list to extract values
+                        highest = max_row.to_pylist()[0]
+                        max_val = highest.get(value_col, None)
+                        
+                        if max_val is not None:
+                            current_max = comp_col.max_values.get(value_col, {}).get(value_col, float("-inf"))
+                            if max_val > current_max:
+                                # Format: comp_col.max_values[value_col] = {comp_col.columns[0]: highest[columns[0]], ...}
+                                max_dict = {}
+                                for col in cols_to_capture:
+                                    max_dict[col] = highest.get(col, None)
+                                comp_col.max_values[value_col] = max_dict
+            except Exception as e:
+                log.warning(f"Error finding max using argmax: {e}")
+            
+            # Find min: Get index of minimum value, then extract that row
+            # Using pc.argmin() - most efficient way to find min row index (O(n) single pass)
+            try:
+                idx_min = pc.argmin(selected_table[value_col])
+                min_idx = idx_min.as_py() if idx_min is not None else None
+                
+                if min_idx is not None:
+                    min_row = selected_table.take([min_idx])
+                    
+                    if min_row.num_rows > 0:
+                        # Convert to list to extract values
+                        lowest = min_row.to_pylist()[0]
+                        min_val = lowest.get(value_col, None)
+                        
+                        if min_val is not None:
+                            current_min = comp_col.min_values.get(value_col, {}).get(value_col, float("inf"))
+                            if min_val < current_min:
+                                min_dict = {}
+                                for col in cols_to_capture:
+                                    min_dict[col] = lowest.get(col, None)
+                                comp_col.min_values[value_col] = min_dict
+            except Exception as e:
+                log.warning(f"Error finding min using argmin: {e}")
                     
         except Exception as e:
             log.error(f"Error updating max/min values for '{value_col}': {e}")
