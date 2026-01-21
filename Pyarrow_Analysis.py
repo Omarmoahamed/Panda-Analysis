@@ -13,6 +13,8 @@ import logging as log
 import json as js
 import Compound_Columns as cc
 
+
+
 @fa.EngineFactory.register_engine("pyarrow")
 class Pyarrow_Analysis(base.Analysis_Summary):
     def __init__(self,file_path, chunk_size:int):
@@ -219,82 +221,84 @@ class Pyarrow_Analysis(base.Analysis_Summary):
         return result_chunk
     
     def _expand_json_column(self, chunk: pa.Table, col_name: str, replace_char=None, target_char=None) -> pa.Table:
-        """Expands a JSON column into separate columns."""
+        """Expands a JSON column into separate columns using Arrow C++ kernels."""
         try:
             col_data = chunk[col_name]
-            col_list = col_data.to_pylist()
             
-            # Parse JSON and collect all keys
-            all_keys = set()
-            parsed_data = []
+            # Handle string replacement using Arrow compute
+            if replace_char and target_char:
+                col_data = pc.replace_substring(col_data, replace_char, target_char)
             
-            for val in col_list:
-                if val is None:
-                    parsed_data.append({})
-                    continue
+            # Convert to string array if not already
+            if not pa.types.is_string(col_data.type):
+                col_data = pc.cast(col_data, pa.string())
+            
+            # Parse JSON strings into struct arrays
+            # Get sample to determine schema
+            valid_mask = pc.is_valid(col_data)
+            valid_data = pc.filter(col_data, valid_mask)
+            
+            if valid_data.length() == 0:
+                return chunk
+            
+            # Sample first JSON to determine schema
+            sample_json = valid_data[0].as_py()
+            if not sample_json:
+                return chunk
+            
+            try:
+                sample_parsed = js.loads(sample_json)
+                if not isinstance(sample_parsed, dict):
+                    return chunk
                 
-                try:
-                    # Handle string replacement if needed
-                    json_str = str(val)
-                    if replace_char and target_char:
-                        json_str = json_str.replace(replace_char, target_char)
-                    
-                    parsed = js.loads(json_str)
-                    if isinstance(parsed, dict):
-                        parsed_data.append(parsed)
-                        all_keys.update(parsed.keys())
+                # Create struct schema from sample
+                fields = []
+                for key, val in sorted(sample_parsed.items()):
+                    if isinstance(val, bool):
+                        fields.append(pa.field(key, pa.bool_()))
+                    elif isinstance(val, int):
+                        fields.append(pa.field(key, pa.int64()))
+                    elif isinstance(val, float):
+                        fields.append(pa.field(key, pa.float64()))
                     else:
-                        parsed_data.append({})
-                except (js.JSONDecodeError, TypeError):
-                    parsed_data.append({})
-            
-            # Create columns for each key
-            new_columns_dict = {}
-            for key in sorted(all_keys):
-                col_name_new = f"{col_name}_{key}"
-                col_values = [row.get(key, None) if isinstance(row, dict) else None for row in parsed_data]
+                        fields.append(pa.field(key, pa.string()))
                 
-                # Try to convert to appropriate type
-                try:
-                    # Try numeric conversion
-                    numeric_values = []
-                    is_numeric = True
-                    for v in col_values:
-                        if v is None:
-                            numeric_values.append(None)
-                        else:
-                            try:
-                                numeric_values.append(float(v))
-                            except (ValueError, TypeError):
-                                is_numeric = False
-                                break
-                    
-                    if is_numeric and numeric_values:
-                        # Check if all are integers
-                        if all(x is None or (isinstance(x, float) and x.is_integer()) for x in numeric_values):
-                            new_columns_dict[col_name_new] = pa.array(
-                                [int(x) if x is not None else None for x in numeric_values],
-                                type=pa.int64()
-                            )
-                        else:
-                            new_columns_dict[col_name_new] = pa.array(numeric_values, type=pa.float64())
-                    else:
-                        new_columns_dict[col_name_new] = pa.array(
-                            [str(v) if v is not None else None for v in col_values],
-                            type=pa.string()
-                        )
-                except Exception:
-                    new_columns_dict[col_name_new] = pa.array(
-                        [str(v) if v is not None else None for v in col_values],
-                        type=pa.string()
-                    )
+                struct_schema = pa.struct(fields)
+            except (js.JSONDecodeError, TypeError):
+                return chunk
             
-            # Remove original column and add new columns
-            other_cols = {name: chunk[name] for name in chunk.column_names if name != col_name}
-            result_chunk = pa.table({**other_cols, **new_columns_dict})
+            # Parse all JSON strings into struct array (minimal Python conversion)
+            json_list = col_data.to_pylist()
+            struct_data = []
+            for json_str in json_list:
+                if json_str is None:
+                    struct_data.append(None)
+                else:
+                    try:
+                        parsed = js.loads(json_str)
+                        if isinstance(parsed, dict):
+                            # Convert to tuple matching struct schema order
+                            struct_vals = tuple(parsed.get(f.name, None) for f in struct_schema)
+                            struct_data.append(struct_vals)
+                        else:
+                            struct_data.append(None)
+                    except (js.JSONDecodeError, TypeError):
+                        struct_data.append(None)
+            
+            # Create struct array
+            struct_array = pa.array(struct_data, type=struct_schema)
+            
+            # Replace JSON column with struct column
+            col_idx = chunk.schema.get_field_index(col_name)
+            chunk_with_struct = chunk.set_column(col_idx, col_name, struct_array)
+            
+            # Flatten struct into separate columns - all in Arrow C++
+            result_chunk = chunk_with_struct.flatten()
             
             # Update expanded_columns list
-            new_col_names = list(new_columns_dict.keys())
+            # Get new column names (original col_name is replaced with flattened columns)
+            new_col_names = [name for name in result_chunk.column_names 
+                            if name not in chunk.column_names or name.startswith(f"{col_name}_")]
             if not self.expanded_columns:
                 self.expanded_columns = new_col_names
             else:
@@ -476,14 +480,13 @@ class Pyarrow_Analysis(base.Analysis_Summary):
                 return
 
             cols_to_capture = [col for col in all_cols if col in valid.column_names]
+            
             if value_col not in cols_to_capture:
                 cols_to_capture.append(value_col)
 
             # Select only columns we need
             selected_table = valid.select(cols_to_capture)
             
-            # Most efficient approach: Use argmax/argmin to find index, then take that row
-            # This avoids sorting/grouping and directly gets the row with max/min value
             
             # Find max: Get index of maximum value, then extract that row
             # Using pc.argmax() - most efficient way to find max row index (O(n) single pass)
@@ -504,7 +507,7 @@ class Pyarrow_Analysis(base.Analysis_Summary):
                             if max_val > current_max:
                                 # Format: comp_col.max_values[value_col] = {comp_col.columns[0]: highest[columns[0]], ...}
                                 max_dict = {}
-                                for col in cols_to_capture:
+                                for col in comp_col.columns:
                                     max_dict[col] = highest.get(col, None)
                                 comp_col.max_values[value_col] = max_dict
             except Exception as e:
@@ -528,7 +531,7 @@ class Pyarrow_Analysis(base.Analysis_Summary):
                             current_min = comp_col.min_values.get(value_col, {}).get(value_col, float("inf"))
                             if min_val < current_min:
                                 min_dict = {}
-                                for col in cols_to_capture:
+                                for col in comp_col.columns:
                                     min_dict[col] = lowest.get(col, None)
                                 comp_col.min_values[value_col] = min_dict
             except Exception as e:
